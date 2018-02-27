@@ -1,0 +1,130 @@
+---
+title: "EDA_airbnb_boston"
+author: "Xuexian Li"
+date: "2018Äê2ÔÂ27ÈÕ"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ggmap)
+```
+
+```{r}
+data <- read_csv("calendar.csv")
+```
+
+```{r}
+head(data, 50)
+```
+
+```{r}
+tail(data,50)
+```
+
+```{r}
+data %>% group_by(available) %>% count()
+```
+
+
+```{r}
+clean_data1 <- data %>% 
+  filter(available == 't') %>%
+  transmute(ID = as.factor(listing_id),
+            Year = year(date),
+            Month = month(date),
+            Day = day(date),
+            price = as.numeric(str_replace_all(str_sub(price, 2), ",","")))
+tail(clean_data1, 1000)
+```
+
+```{r}
+summary(clean_data1)
+```
+
+
+```{r}
+clean_data1 %>% 
+  ggplot() + geom_histogram(aes(x = price, y = ..density..), binwidth = 10)
+```
+```{r}
+clean_data1 %>% 
+  ggplot() + geom_histogram(aes(x = price, y = ..density..), binwidth = 5) + 
+  coord_cartesian(xlim = c(0, 1000))
+```
+
+
+```{r}
+data <- read_csv("listings.csv")
+```
+
+```{r}
+listings <- data %>%
+  select(id, price, neighbourhood_cleansed, bedrooms, 
+         property_type, room_type, name, is_location_exact, 
+         latitude, longitude, number_of_reviews, review_scores_rating) %>% 
+  mutate(price = as.numeric(str_replace_all(str_sub(price, 2), ",","")),
+         id = as.factor(id)) %>% 
+  filter(is_location_exact == 't') %>%
+  na.omit()
+head(listings)
+
+```
+
+```{r}
+summary(listings)
+```
+```{r}
+listings %>% group_by(id) %>% count() %>% filter(n == 1)
+```
+
+```{r}
+listings %>% group_by(neighbourhood_cleansed) %>% count()
+```
+```{r}
+listings %>% group_by(property_type) %>% count()
+```
+```{r}
+listings %>% group_by(room_type) %>% count()
+```
+```{r}
+listings %>% ggplot() + geom_histogram(aes(x = review_scores_rating, y = ..density..), binwidth = 2)
+```
+```{r}
+mapdata <- get_map(location = "boston")
+```
+```{r}
+ggmap(mapdata) + 
+  geom_point(data = listings,
+             mapping = aes(x = longitude, y = latitude, color = 'blue'))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
