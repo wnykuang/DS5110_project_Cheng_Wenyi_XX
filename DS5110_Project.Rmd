@@ -1,0 +1,360 @@
+---
+title: "DS5110_Project"
+author: "Xuxian_Li"
+date: "2018Äê4ÔÂ13ÈÕ"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(leaps)
+library(glmnet)
+library(modelr)
+```
+
+# 1 Tidy data
+
+```{r, warning=FALSE}
+data <- read_csv("listings.csv")
+```
+```{r}
+listings <- data %>%
+  select(id, neighbourhood_cleansed, property_type, room_type, accommodates, 
+         bathrooms, bedrooms, beds, bed_type, amenities, guests_included, 
+         minimum_nights, price, is_location_exact) %>% 
+  mutate(price = as.numeric(str_replace_all(str_sub(price, 2), ",","")),
+         id = as.factor(id)) %>% 
+  filter(is_location_exact == 't') %>%
+  select(-is_location_exact) %>% 
+  na.omit()
+```
+
+```{r}
+listings$amenities <- listings$amenities %>% 
+  str_replace_all('"', '') %>% 
+  str_replace_all(' / ', '_or_') %>% 
+  str_replace_all(' ', '_') %>% 
+  str_replace_all('\\(', '') %>% 
+  str_replace_all('\\)', '') %>%
+  str_replace_all('/', '_or_') %>% 
+  str_replace_all('-', '_') %>% 
+  str_replace_all('24', 'Twenty_four')
+for(i in 1:length(listings$amenities))
+{
+  listings$amenities[i] <- str_sub(listings$amenities[i], 2, str_length(listings$amenities[i]) - 1)
+}
+result <- NULL
+for(i in 1:length(listings$amenities))
+{
+   result <- c(result, str_split(listings$amenities[i], ",")[[1]])
+}
+result <- unique(result)
+result <- result[-c(27, 28, 39)]
+for(i in 1:length(result))
+{
+  listings <- listings %>% mutate(x = "F")
+  colnames(listings)[13 + i] <- result[i]
+}
+for(i in 1:length(listings$amenities))
+{
+  temp <- str_split(listings$amenities[i], ",")[[1]]
+  for(word in temp)
+  {
+    listings[i, which(colnames(listings) == word)] <- "T"
+  }
+}
+price <- listings$price
+listings <- listings %>% 
+  select(-amenities, -price) %>% 
+  mutate(price = price)
+```
+
+```{r}
+write_csv(listings, "listings_tidy.csv") #transfer e3 into 000
+```
+
+The code above show the work of tidydata.
+
+# 2 Preprecessing
+## 2.1 Select the training set
+
+```{r, warning=FALSE}
+listings <- read_csv("listings_tidy.csv")
+```
+
+```{r, warning=FALSE}
+listings
+```
+
+```{r, warning=FALSE}
+set.seed(123)
+ratio = sample(1:nrow(listings), size = 0.7 * nrow(listings))
+Training = listings[ratio, -1]
+Validation = listings[-ratio, -1]
+```
+
+## Preliminary data exploration
+```{r}
+summary(Training)
+```
+
+```{r, warning=FALSE}
+colnames(Training)
+```
+
+```{r, warning=FALSE}
+ggplot(Training) + geom_boxplot(aes(x = neighbourhood_cleansed, y = price)) + ylim(0, 1000) + coord_flip()
+```
+From this plot I can see some outliers, but it is not obvious.
+
+```{r, warning=FALSE}
+ggplot(Training) + geom_boxplot(aes(x = property_type, y = price)) + ylim(0, 1000) + coord_flip()
+```
+
+```{r}
+ggplot(Training) + geom_boxplot(aes(x = room_type, y = price)) + ylim(0, 1000) + coord_flip()
+```
+
+```{r, warning=FALSE}
+for(i in c(4:7, 9:10))
+{
+  s = str_c("print(ggplot(Training) + geom_point(aes(x = ", colnames(Training)[i], ", y = price)) + ylim(0, 1000))")
+  eval(parse(text = s))
+}
+```
+
+```{r}
+ggplot(Training) + geom_point(aes(x = log(minimum_nights), y = price)) + ylim(0, 1000)
+```
+
+```{r, warning=FALSE}
+for(i in 12:length(colnames(Training)) - 1)
+{
+  s = str_c("print(ggplot(Training) + geom_boxplot(aes(x = ", colnames(Training)[i], ", y = price)) + ylim(0, 1000))")
+  eval(parse(text = s))
+}
+```
+
+# 3 Model fitting
+```{r, warning=FALSE}
+lm_train <- lm(price~., data = Training)
+summary(lm_train)
+```
+
+```{r}
+qqnorm(lm_train$residuals, main = "Normal qqplot of residuals")
+qqline(lm_train$residuals)
+```
+
+```{r}
+regfit_full <- regsubsets(price~., data = Training, really.big = T)
+reg_summary <- summary(regfit_full)
+reg_summary
+```
+
+
+```{r}
+par(mfrow = c(2,2))
+plot(reg_summary$rss, xlab = "Number of variables", ylab = "Residual Sum of Squares (RSS)", type = "l")
+plot(reg_summary$adjr2, xlab = "Number of variables", ylab = "Adjacent R square", type = "l")
+plot(reg_summary$cp, xlab = "Number of variables", ylab = "CP", type = "l")
+plot(reg_summary$bic, xlab = "Number of variables", ylab = "BIC", type = "l")
+```
+
+```{r, Warning=FALSE}
+lm_fit <- lm(price ~ bedrooms + room_type + Air_Conditioning + Elevator_in_Building + accommodates, data = Training)
+summary(lm_fit)
+```
+
+```{r}
+Training %>% 
+  add_residuals(lm_fit, "resid") %>% 
+  ggplot(aes(bedrooms, resid)) + geom_point() + ylim(0, 1000)
+```
+
+```{r}
+Training %>% 
+  add_residuals(lm_fit, "resid") %>% 
+  ggplot(aes(room_type, resid)) + geom_boxplot() + ylim(0, 500)
+```
+
+```{r}
+Training %>% 
+  add_residuals(lm_fit, "resid") %>% 
+  ggplot(aes(Air_Conditioning, resid)) + geom_boxplot() + ylim(0, 500)
+```
+
+```{r}
+Training %>% 
+  add_residuals(lm_fit, "resid") %>% 
+  ggplot(aes(Elevator_in_Building, resid)) + geom_boxplot() + ylim(0, 500)
+```
+
+```{r}
+Training %>% 
+  add_residuals(lm_fit, "resid") %>% 
+  ggplot(aes(accommodates, resid)) + geom_point() + ylim(0, 500)
+```
+
+```{r}
+x <- model.matrix(price ~ bedrooms + room_type + Air_Conditioning + Elevator_in_Building + accommodates, Training)[,-1]
+y <- Training$price
+grid = 10^seq(15,-5, length = 100)
+ridge_model = glmnet(x, y, alpha = 0, lambda = grid)
+plot(ridge_model, main = "Ridge regression", label = TRUE,  xvar = "lambda", xlim = c(-5,15))
+```
+
+```{r}
+cv_out <- cv.glmnet(x, y, alpha = 0)
+plot(cv_out)
+```
+
+```{r}
+best_lam = cv_out$lambda.min
+log(best_lam)
+```
+
+```{r}
+ridge_model <- glmnet(x, y, alpha = 0, lambda = best_lam)
+predict(ridge_model, s = best_lam, type = "coefficients")
+```
+
+```{r}
+lasso_model <- glmnet(x, y, alpha = 1, lambda = grid)
+plot(lasso_model, main = "Lasso regression", label = TRUE, xvar = "lambda", xlim = c(-5, 15))
+```
+
+```{r}
+cv_out <- cv.glmnet(x, y, alpha = 1)
+plot(cv_out)
+```
+
+```{r}
+best_lam_lasso <- cv_out$lambda.min
+best_lam_lasso
+```
+
+```{r}
+lasso_model <- glmnet(x, y, alpha = 1, lambda = best_lam_lasso)
+predict(lasso_model, s = best_lam_lasso, type = "coefficients")
+```
+
+```{r}
+Validation <- Validation[-141, ]
+listings <- listings[, -1]
+```
+
+```{r}
+x <- model.matrix(price ~ bedrooms + room_type + Air_Conditioning + Elevator_in_Building + accommodates, listings)[-ratio, -1]
+y <- listings$price[-ratio]
+newx <- data.matrix(x)
+real_value_price <- Validation$price
+```
+
+```{r}
+result_all <- predict(lm_train, newdata = Validation)
+result_best_subset <- predict(lm_fit, newdata = Validation)
+result_ridge <- predict(ridge_model, newx = newx)
+result_lasso <- predict(lasso_model, newx = newx)
+```
+
+```{r, warning=FALSE}
+error_all <- mean((result_all - real_value_price)^2)
+error_all
+```
+
+```{r, warning=FALSE}
+cor(result_all, real_value_price)
+```
+
+```{r, warning=FALSE}
+error_best_subset <- mean((result_best_subset - real_value_price)^2)
+error_best_subset
+```
+
+```{r, warning=FALSE}
+cor(result_best_subset, real_value_price)
+```
+
+```{r, warning=FALSE}
+real_value_price <- listings$price[-ratio]
+error_ridge <- sum((result_ridge - real_value_price)^2)/nrow(Validation)
+error_ridge
+```
+
+```{r}
+cor(result_ridge, real_value_price)
+```
+
+```{r}
+error_lasso <- sum((result_lasso - real_value_price)^2)/nrow(Validation)
+error_lasso
+```
+
+```{r}
+cor(result_lasso, real_value_price)
+```
+
+```{r}
+par(mfrow = c(2,3))
+real_value_price <- Validation$price
+plot(x = real_value_price, y = result_all, xlab = "real values of price",
+ylab = "predicted prices", main = "all predictors", col = "blue", asp=1 )
+abline(a = 0, b = 1)
+plot(x = real_value_price, y = result_best_subset, xlab = "real values of price",
+ylab = "predicted prices", main = "best subset selection", col = "green", asp=1)
+abline(a = 0, b = 1)
+real_value_price <- listings$price[-ratio]
+plot(x = real_value_price, y = result_lasso, xlab = "real values of price",
+ylab = "predicted prices", main = "lasso", col = "red", asp=1)
+abline(a = 0, b = 1)
+plot(x = real_value_price, y = result_ridge, xlab = "real values of price",
+ylab = "predicted prices", main = "ridge", col = "orange", asp=1)
+abline(a = 0, b = 1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
