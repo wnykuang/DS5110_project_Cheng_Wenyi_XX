@@ -165,8 +165,14 @@ plot(reg_summary$bic, xlab = "Number of variables", ylab = "BIC", type = "l")
 ```
 
 ```{r, Warning=FALSE}
-lm_fit <- lm(price ~ bedrooms + room_type + Air_Conditioning + Elevator_in_Building + accommodates, data = Training)
+lm_fit <- lm(price ~ neighbourhood_cleansed + bedrooms + room_type + Air_Conditioning + Elevator_in_Building + accommodates, data = Training)
 summary(lm_fit)
+```
+
+```{r}
+Training %>% 
+  add_residuals(lm_fit, "resid") %>% 
+  ggplot(aes(neighbourhood_cleansed, resid)) + geom_boxplot() + ylim(0, 1000) + coord_flip()
 ```
 
 ```{r}
@@ -200,7 +206,7 @@ Training %>%
 ```
 
 ```{r}
-x <- model.matrix(price ~ bedrooms + room_type + Air_Conditioning + Elevator_in_Building + accommodates, Training)[,-1]
+x <- model.matrix(price ~ neighbourhood_cleansed + bedrooms + room_type + Air_Conditioning + Elevator_in_Building + accommodates, Training)[,-1]
 y <- Training$price
 grid = 10^seq(15,-5, length = 100)
 ridge_model = glmnet(x, y, alpha = 0, lambda = grid)
@@ -248,7 +254,7 @@ listings <- listings[, -1]
 ```
 
 ```{r}
-x <- model.matrix(price ~ bedrooms + room_type + Air_Conditioning + Elevator_in_Building + accommodates, listings)[-ratio, -1]
+x <- model.matrix(price ~ neighbourhood_cleansed + bedrooms + room_type + Air_Conditioning + Elevator_in_Building + accommodates, listings)[-ratio, -1]
 y <- listings$price[-ratio]
 newx <- data.matrix(x)
 real_value_price <- Validation$price
