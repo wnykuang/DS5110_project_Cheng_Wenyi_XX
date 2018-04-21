@@ -1,0 +1,303 @@
+---
+title: "EDA_airbnb_boston"
+author: "Xuexian Li"
+date: "2018-2-27"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ggmap)
+library(tidytext)
+library("RColorBrewer")
+library(wordcloud2)
+library(class)
+```
+
+```{r}
+calendar <- read_csv('calendar.csv')
+listings <- read_csv('listings.csv')
+reviews <- read_csv('reviews.csv')
+
+```
+#### sentiment analysis based on geometric location
+```{r}
+idwReviews <- reviews %>%
+  select(listing_id) %>%
+  distinct(listing_id)
+```
+#### which neighbourhood rentee have most opinions about their bnb?
+```{r}
+neighbdreviewedcount <- listings %>%
+  select(id,neighbourhood) %>%
+  filter(id %in% idwReviews$listing_id) %>%
+  filter(!is.na(neighbourhood)) %>%
+  group_by(neighbourhood) %>%
+  summarise(reviewcount = n()) %>%
+  arrange(desc(reviewcount))
+  
+neighbdcount <- listings %>%
+  select(neighbourhood) %>%
+  filter(!is.na(neighbourhood)) %>%
+  group_by(neighbourhood) %>%
+  summarise(countbhd = n()) %>%
+  arrange(desc(countbhd))
+
+left_join(neighbdcount,neighbdreviewedcount) %>%
+  mutate(reviewrate = reviewcount/countbhd) %>%
+  filter(reviewcount > 20)%>%
+  arrange(desc(reviewrate))
+```
+
+```{r}
+listings %>%
+  select(neighbourhood,review_scores_rating) %>%
+  filter(!is.na(neighbourhood)) %>%
+  filter(!is.na(review_scores_rating)) %>%
+  group_by(neighbourhood) %>%
+  summarise(countnbhd = n(),averagerating = mean(review_scores_rating)) %>%
+  filter(countnbhd > 20) %>%
+  arrange(desc(countnbhd))
+``` 
+
+
+#### analysis the hifreq word for each neighbourhood
+```{r}
+idNeibor <- listings %>%
+  select(id,neighbourhood) %>%
+  filter(id %in% idwReviews$listing_id) %>%
+  filter(!is.na(neighbourhood)) %>%
+  mutate(listing_id = id)
+
+hotreviewedneighbourhood <- idNeibor %>% 
+  group_by(neighbourhood) %>%
+  count() %>%
+  arrange(desc(n)) %>%
+  filter(n > 100) %>%
+  select(neighbourhood)
+
+neighbourhoodComments <- inner_join(idNeibor,reviews, by ="listing_id") %>%
+  select(neighbourhood, comments) %>%
+  group_by(neighbourhood) %>%
+  mutate(commentsbyneighbourhood = paste0(comments, collapse = '')) %>%
+  select(neighbourhood,commentsbyneighbourhood) %>%
+  distinct(neighbourhood, commentsbyneighbourhood)
+
+neighbourhoodComments %>%
+  filter(neighbourhood %in% hotreviewedneighbourhood$neighbourhood)%>%
+  unnest_tokens(word,commentsbyneighbourhood) %>%
+  anti_join(stop_words, by = 'word')%>%
+  count(neighbourhood,word, sort = TRUE) %>%
+  group_by(neighbourhood) %>%
+  top_n(15) %>%
+  ungroup() %>%
+  ggplot(aes(reorder(word,n), n, fill = neighbourhood)) + 
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "n") +
+  facet_wrap(~neighbourhood, ncol = 2, scales = "free") +
+  coord_flip()
+
+neighbourhoodComments %>%
+  filter(neighbourhood %in% hotreviewedneighbourhood$neighbourhood)%>%
+  unnest_tokens(word,commentsbyneighbourhood) %>%
+  count(neighbourhood, word, sort = TRUE) %>%
+  bind_tf_idf(word, neighbourhood, n) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  group_by(neighbourhood) %>%
+  arrange(desc(tf_idf)) %>%
+  top_n(15) %>%
+  ungroup() %>%
+  ggplot(aes(reorder(word,tf_idf), tf_idf, fill = neighbourhood)) + geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~neighbourhood, ncol = 2, scales = "free") +
+  coord_flip()
+
+
+neighbourhoodtfidfword <- neighbourhoodComments %>%
+  filter(neighbourhood %in% hotreviewedneighbourhood$neighbourhood)%>%
+  unnest_tokens(word,commentsbyneighbourhood) %>%
+  count(neighbourhood, word, sort = TRUE) %>%
+  bind_tf_idf(word, neighbourhood, n) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  group_by(neighbourhood) %>%
+  top_n(15)
+
+```
+#### most shared words among different area
+
+```{r}
+neigbourhoodcommentstokened <- neighbourhoodComments %>%
+  filter(neighbourhood %in% hotreviewedneighbourhood$neighbourhood)%>%
+  unnest_tokens(word,commentsbyneighbourhood) %>%
+  anti_join(stop_words, by = 'word')%>%
+  count(neighbourhood,word, sort = TRUE) %>%
+  group_by(neighbourhood) %>%
+  group_by(word) %>%
+  mutate(sum_ = sum(n)) %>%
+  distinct(word,sum_) %>%
+  ungroup() %>%
+  select(word,sum_) %>%
+  arrange(desc(sum_)) %>%
+  top_n(500)
+
+set.seed(1234)
+wordfreqtotal <- neigbourhoodcommentstokened %>%
+  mutate(freq = as.integer(sum_/sum(sum_) * 1000)) %>%
+  filter(!word == 'apartment') %>%
+  select(word ,freq)
+
+wordcloud2(wordfreqtotal,color = "random-dark")
+```
+
+```{r}
+neighbhdComment2Gram <- neighbourhoodComments %>%
+  filter(neighbourhood %in% hotreviewedneighbourhood$neighbourhood)%>%
+  unnest_tokens(bigram, commentsbyneighbourhood, token = "ngrams", n = 2)
+
+neighbhdComment2GramNoStopWords <- neighbhdComment2Gram %>% count(bigram , sort = TRUE) %>%
+  separate(bigram, c('word1','word2'), sep = ' ') %>% 
+  filter(!word1 %in% stop_words$word) %>%
+  filter(!word2 %in% stop_words$word) 
+
+neighbhdComment2GramNoStopWordsTfidf <- neighbhdComment2GramNoStopWords %>%
+  unite(bigram, word1, word2, sep = " ") %>%
+  bind_tf_idf(bigram, neighbourhood, n) %>%
+  arrange(desc(tf_idf)) 
+  
+neighbhdComment2GramNoStopWordsTfidf %>%
+  arrange(desc(tf_idf)) %>%
+  #mutate(bigram = factor(bigram, levels = rev(unique(bigram)))) %>%
+  group_by(neighbourhood) %>%
+  top_n(15) %>%
+  ungroup() %>%
+  ggplot(aes(reorder(bigram,tf_idf), tf_idf, fill = neighbourhood)) + geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~neighbourhood, ncol = 3, scales = "free") +
+  coord_flip()
+```
+
+
+### analysis the sentiment for each area
+```{r}
+neighbourhoodPositiveRate <- neighbourhoodComments %>%
+  filter(neighbourhood %in% hotreviewedneighbourhood$neighbourhood)%>%
+  unnest_tokens(word,commentsbyneighbourhood) %>%
+  inner_join(get_sentiments("bing"),bg="word") %>%
+  count(neighbourhood, sentiment) %>%
+  spread(sentiment, n, fill = 0L) %>%
+  mutate(positiverate = positive/(positive + negative)) %>%
+  arrange(desc(positiverate))
+minRate <- min(neighbourhoodPositiveRate$positiverate)
+maxRate <- max(neighbourhoodPositiveRate$positiverate)
+
+ neighbourhoodPositiveRate %>%
+  select(neighbourhood, positiverate) %>%
+  mutate(normalized = 5*((positiverate - minRate)/(maxRate - minRate))) %>%
+   ggplot(aes(x = reorder(neighbourhood, -positiverate), y= positiverate, fill = neighbourhood)) + geom_bar(stat = 'identity') + xlab('neighbourhood') + ylab('positive rate') +theme(text = element_text(size=20),axis.text.x = element_text(angle=45, hjust=1))
+
+```
+
+#### analysis the sentiment for each price interval
+```{r}
+priceId <- listings %>%
+  filter(!is.na(price)) %>%
+  select(price, id) 
+
+priceId$price <- as.numeric(gsub("\\$", "", priceId$price))
+
+pricecomments <- priceId %>%
+  mutate(listing_id = id) %>%
+  select(price, listing_id) %>%
+  right_join(reviews,by = 'listing_id') %>%
+  select(price,comments)
+
+
+pricerangeComments <- pricecomments %>%
+  mutate(pricerange = ifelse(price %in% 0:78, 'budget price',
+                            ifelse(price %in% 79:119, 'lower price',
+                            ifelse(price %in% 120:182,'median price',
+                            ifelse(price %in% 182:900,'high price','high price'))))) %>%  
+  select(pricerange, comments) %>%
+  group_by(pricerange) %>%
+  mutate(commentsbyrange = paste0(comments, collapse = '')) %>%
+  select(pricerange,commentsbyrange) %>%
+  distinct(pricerange, commentsbyrange)
+
+pricerangeposrt <- pricerangeComments %>%   
+  unnest_tokens(word,commentsbyrange) %>%
+  inner_join(get_sentiments("bing"),bg="word") %>%
+  count(pricerange, sentiment) %>%
+  spread(sentiment, n, fill = 0L) %>%
+  mutate(positive_rate = positive/(positive + negative)) %>%
+  arrange(desc(positive_rate))
+
+pricerangeposrt %>%
+  select(pricerange, positive_rate) %>%
+  ggplot(aes(x = reorder(pricerange, -positive_rate), y= positive_rate, fill = pricerange)) + geom_bar(stat = 'identity') + xlab('price range') + ylab('positive rate') +theme(text = element_text(size=20))
+  
+  
+
+pricerangeComments %>%
+  unnest_tokens(word,commentsbyrange) %>%
+  anti_join(stop_words, by = 'word')%>%
+  count(pricerange,word, sort = TRUE) %>%
+  group_by(pricerange) %>%
+  top_n(15) %>%
+  ggplot(aes(reorder(word,n), n, fill = pricerange)) + 
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "n") +
+  facet_wrap(~pricerange, ncol = 2, scales = "free") +
+  coord_flip()
+
+pricerangecommentsTidy <- pricerangeComments %>%
+  unnest_tokens(word, commentsbyrange)
+
+pricerangecommentsTidy %>% 
+  count(pricerange, word, sort = TRUE) %>%
+  bind_tf_idf(word, pricerange, n ) %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(pricerange) %>%
+  top_n(15)
+  
+
+pricerangeComments %>%
+  unnest_tokens(word,commentsbyrange) %>%
+  count(pricerange, word, sort = TRUE) %>%
+  bind_tf_idf(word, pricerange, n) %>%
+  #mutate(word = factor(word, levels = rev(unique(word)))) %>% 
+  group_by(pricerange) %>%
+  arrange(desc(tf_idf)) %>%
+  top_n(15) %>%
+  ungroup() %>%
+  ggplot(aes(reorder(word, tf_idf), tf_idf, fill = pricerange)) + geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~pricerange, ncol = 3, scales = "free") +
+  coord_flip()
+```
+
+
+```{r}
+pricecomments %>%
+  mutate(pricerange = ifelse(price %in% 0:78, 'budget price',
+                            ifelse(price %in% 79:119, 'lower price',
+                            ifelse(price %in% 120:182,'median price',
+                            ifelse(price %in% 182:900,'high price','high price'))))) %>% 
+  write.csv(.,file = '~/Desktop/something.csv')
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
